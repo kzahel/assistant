@@ -59,7 +59,7 @@ You can edit your own files in this directory:
 - `config.yaml` — only if explicitly asked to change configuration
 - `projects.md` — OK to update when project status changes
 
-**IMPORTANT: This CLAUDE.md is a compiled artifact.** Do not edit it directly — your changes will be overwritten.
+**IMPORTANT: This CLAUDE.md is a compiled artifact (also available as `AGENTS.md` symlink for non-Claude agents).** Do not edit it directly — your changes will be overwritten.
 
 Source files that feed into this CLAUDE.md:
 - `soul.md` — your personality (this directory)

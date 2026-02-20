@@ -1,8 +1,8 @@
 # Assistant Engine
 
-A directory convention for portable Claude Code assistants. No daemon, no framework — just files on disk.
+A directory convention for portable AI coding-agent assistants. No daemon, no framework — just files on disk. Provider-agnostic: works with Claude Code, Codex, Gemini CLI, or any agent that reads a markdown instructions file.
 
-The engine provides shared capabilities (skills, tools, build system). Each assistant is a named **instance** with its own personality, config, and memory.
+The engine provides shared capabilities (skills, tools, build system). Each assistant is a named **instance** with its own personality, config, and memory. The build step emits `CLAUDE.md` (the native format for Claude Code) and an `AGENTS.md` symlink so other agents can discover the same file.
 
 ## Architecture
 
@@ -18,8 +18,8 @@ Engine (this repo)                    Instance (private, per-assistant)
 │   ├── build.ts                      ├── memory/            ← learnings, logs
 │   ├── browser-cli.ts                ├── state/             ← skill checkpoints
 │   ├── gmail-cli.ts                  ├── sessions/          ← conversation history
-│   ├── git-sync-cli.ts               └── CLAUDE.md          ← compiled (generated)
-│   ├── scheduler.ts
+│   ├── git-sync-cli.ts               ├── CLAUDE.md          ← compiled (generated)
+│   ├── scheduler.ts                  └── AGENTS.md          ← symlink → CLAUDE.md
 │   └── browser/                      The instance never references the engine
 │       ├── server.ts                 directly. build.ts bridges the two.
 │       ├── routes.ts
@@ -54,7 +54,7 @@ tsx ~/code/assistant/lib/build.ts --instance ~/assistant-data/assistants/dave
 cd ~/assistant-data/assistants/dave && claude
 ```
 
-That gives you a working assistant with all skills available (but none configured) and auto-discovered tools.
+That gives you a working assistant with all skills available (but none configured) and auto-discovered tools. Non-Claude agents can point at `AGENTS.md` (a symlink to `CLAUDE.md`) in the instance directory.
 
 ### Adding personality and skills
 

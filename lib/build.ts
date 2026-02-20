@@ -11,7 +11,7 @@
  *   tsx lib/build.ts --instance ~/assistant-data/assistants/my-assistant --skills ~/code/assistant/skills
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import matter from "gray-matter";
@@ -264,6 +264,11 @@ const claudeMd = render(template);
 
 const outputPath = join(resolvedInstance, "CLAUDE.md");
 writeFileSync(outputPath, claudeMd, "utf-8");
+
+// Create AGENTS.md symlink so non-Claude agents can discover the instructions
+const agentsLink = join(resolvedInstance, "AGENTS.md");
+if (existsSync(agentsLink)) unlinkSync(agentsLink);
+symlinkSync("CLAUDE.md", agentsLink);
 
 console.log(`Built ${outputPath}`);
 console.log(`  Skills: ${skills.map((s) => s.name).join(", ") || "(none)"}`);
