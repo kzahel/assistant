@@ -1,0 +1,413 @@
+#!/usr/bin/env tsx
+
+/**
+ * Smart cron scheduler for assistant instances.
+ *
+ * Reads schedules from config.yaml, fires Claude Code sessions via the
+ * Yep Anywhere server API at the right times, and tracks run state.
+ *
+ * Usage:
+ *   scheduler --instance ~/assistant-data/assistants/my-assistant
+ *   scheduler --instance ~/assistant-data/assistants/my-assistant --run-now morning-digest
+ */
+
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
+import { parseArgs } from "node:util";
+import cronParser from "cron-parser";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+
+// --- Types ---
+
+interface ScheduleState {
+	lastRunAt?: string;
+	lastStatus?: "ok" | "error" | "skipped";
+	lastSummary?: string;
+	consecutiveErrors: number;
+	maxConsecutiveErrors: number;
+}
+
+interface SkillRef {
+	skill: string;
+	args?: Record<string, unknown>;
+}
+
+interface Schedule {
+	name: string;
+	cron: string;
+	skills: SkillRef[];
+	output?: string;
+	enabled?: boolean;
+	_state?: ScheduleState;
+}
+
+interface Config {
+	name: string;
+	skills?: Record<string, Record<string, unknown>>;
+	schedules?: Schedule[];
+}
+
+interface ActiveSession {
+	scheduleName: string;
+	sessionId: string;
+	processId: string;
+	startedAt: number;
+}
+
+// --- CLI args ---
+
+const { values: args } = parseArgs({
+	options: {
+		instance: { type: "string" },
+		port: { type: "string", default: "3400" },
+		"run-now": { type: "string" },
+	},
+	strict: false,
+});
+
+const instanceDir = resolve(
+	typeof args.instance === "string" ? args.instance : "",
+);
+if (!instanceDir || !existsSync(join(instanceDir, "config.yaml"))) {
+	console.error(
+		"Usage: scheduler --instance <dir> [--port 3400] [--run-now <name>]",
+	);
+	console.error("  <dir> must contain a config.yaml");
+	process.exit(1);
+}
+
+const YA_PORT = Number(args.port) || 3400;
+const YA_BASE = `http://127.0.0.1:${YA_PORT}`;
+
+// --- Helpers ---
+
+function log(msg: string) {
+	console.log(`[${new Date().toISOString()}] ${msg}`);
+}
+
+function toProjectId(path: string): string {
+	return Buffer.from(path).toString("base64url");
+}
+
+function loadConfig(): Config {
+	const raw = readFileSync(join(instanceDir, "config.yaml"), "utf-8");
+	return parseYaml(raw) as Config;
+}
+
+function saveConfig(config: Config) {
+	writeFileSync(join(instanceDir, "config.yaml"), stringifyYaml(config));
+}
+
+function appendActivity(entry: Record<string, unknown>) {
+	const logDir = join(instanceDir, "memory");
+	if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+	appendFileSync(
+		join(logDir, "activity-log.jsonl"),
+		`${JSON.stringify(entry)}\n`,
+	);
+}
+
+function buildSessionMessage(schedule: Schedule, config: Config): string {
+	const skillLines = schedule.skills
+		.map((s) => {
+			let line = `- ${s.skill}`;
+			if (s.args) line += ` (args: ${JSON.stringify(s.args)})`;
+			return line;
+		})
+		.join("\n");
+
+	const outputLine = schedule.output
+		? `\nDeliver the combined output via the ${schedule.output} skill.`
+		: "";
+
+	return [
+		`ASSISTANT_TRIGGER=cron:${schedule.name}`,
+		"",
+		`Run the "${schedule.name}" schedule. Execute these skills in order:`,
+		skillLines,
+		outputLine,
+		"",
+		"Execute autonomously — do not ask questions. When done, summarize what you did.",
+	].join("\n");
+}
+
+// --- Session management ---
+
+const activeSessions = new Map<string, ActiveSession>();
+const projectId = toProjectId(instanceDir);
+
+async function fireSchedule(
+	schedule: Schedule,
+	config: Config,
+): Promise<boolean> {
+	const message = buildSessionMessage(schedule, config);
+
+	log(`Firing schedule: ${schedule.name}`);
+
+	try {
+		const res = await fetch(`${YA_BASE}/api/projects/${projectId}/sessions`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Yep-Anywhere": "true",
+			},
+			body: JSON.stringify({
+				message,
+				mode: "bypassPermissions",
+			}),
+		});
+
+		if (res.status === 200) {
+			const data = (await res.json()) as {
+				sessionId: string;
+				processId: string;
+			};
+			log(`  Session started: ${data.sessionId}`);
+			activeSessions.set(schedule.name, {
+				scheduleName: schedule.name,
+				sessionId: data.sessionId,
+				processId: data.processId,
+				startedAt: Date.now(),
+			});
+			return true;
+		}
+
+		if (res.status === 202) {
+			const data = (await res.json()) as { queueId: string; position: number };
+			log(`  Queued at position ${data.position}`);
+			// Treat as fired — we won't have a sessionId to track until it starts
+			return true;
+		}
+
+		const body = await res.text();
+		log(`  Failed (${res.status}): ${body}`);
+		return false;
+	} catch (err) {
+		log(`  Error: ${(err as Error).message}`);
+		return false;
+	}
+}
+
+async function pollSession(
+	active: ActiveSession,
+): Promise<"running" | "done" | "error"> {
+	try {
+		const res = await fetch(
+			`${YA_BASE}/api/projects/${projectId}/sessions/${active.sessionId}/metadata`,
+			{ headers: { "X-Yep-Anywhere": "true" } },
+		);
+
+		if (!res.ok) return "error";
+
+		const data = (await res.json()) as { ownership: { owner: string } };
+		return data.ownership.owner === "none" ? "done" : "running";
+	} catch {
+		return "error";
+	}
+}
+
+function updateState(
+	config: Config,
+	scheduleName: string,
+	status: "ok" | "error",
+	durationMs: number,
+) {
+	const schedule = config.schedules?.find((s) => s.name === scheduleName);
+	if (!schedule) return;
+
+	if (!schedule._state) {
+		schedule._state = { consecutiveErrors: 0, maxConsecutiveErrors: 5 };
+	}
+
+	schedule._state.lastRunAt = new Date().toISOString();
+	schedule._state.lastStatus = status;
+
+	if (status === "error") {
+		schedule._state.consecutiveErrors++;
+	} else {
+		schedule._state.consecutiveErrors = 0;
+	}
+
+	saveConfig(config);
+
+	appendActivity({
+		ts: new Date().toISOString(),
+		trigger: "schedule",
+		source: scheduleName,
+		skill: "*",
+		status,
+		durationMs,
+	});
+}
+
+// --- Cron logic ---
+
+interface ScheduleTracker {
+	schedule: Schedule;
+	nextFire: Date;
+	advance(): void;
+}
+
+function initTrackers(schedules: Schedule[]): ScheduleTracker[] {
+	return schedules
+		.filter((s) => s.enabled !== false)
+		.map((s) => {
+			const interval = cronParser.parseExpression(s.cron, {
+				tz: "Europe/Zurich",
+				currentDate: new Date(),
+			});
+			return {
+				schedule: s,
+				nextFire: interval.next().toDate(),
+				advance() {
+					this.nextFire = interval.next().toDate();
+				},
+			};
+		});
+}
+
+function isAutoDisabled(schedule: Schedule): boolean {
+	const state = schedule._state;
+	if (!state) return false;
+	const max = state.maxConsecutiveErrors ?? 5;
+	return state.consecutiveErrors >= max;
+}
+
+// --- Main loop ---
+
+async function runLoop() {
+	let config = loadConfig();
+	const trackers = initTrackers(config.schedules ?? []);
+
+	log(`Scheduler started for ${config.name}`);
+	log(`Tracking ${trackers.length} schedule(s):`);
+	for (const t of trackers) {
+		log(`  ${t.schedule.name}: next fire at ${t.nextFire.toISOString()}`);
+	}
+
+	const tick = async () => {
+		const now = new Date();
+
+		// Check schedules
+		for (const tracker of trackers) {
+			const { schedule } = tracker;
+
+			if (isAutoDisabled(schedule)) continue;
+			if (activeSessions.has(schedule.name)) continue;
+
+			if (now >= tracker.nextFire) {
+				config = loadConfig(); // Reload to get fresh state
+				const success = await fireSchedule(schedule, config);
+
+				if (!success) {
+					updateState(config, schedule.name, "error", 0);
+				}
+
+				tracker.advance();
+				log(
+					`  ${schedule.name}: next fire at ${tracker.nextFire.toISOString()}`,
+				);
+			}
+		}
+
+		// Poll active sessions
+		for (const [name, active] of Array.from(activeSessions.entries())) {
+			const result = await pollSession(active);
+
+			if (result === "done") {
+				const durationMs = Date.now() - active.startedAt;
+				log(`Session completed: ${name} (${Math.round(durationMs / 1000)}s)`);
+				config = loadConfig();
+				updateState(config, name, "ok", durationMs);
+				activeSessions.delete(name);
+			} else if (result === "error") {
+				const durationMs = Date.now() - active.startedAt;
+				// Only count as error if we've been polling for a while (not just a transient fetch failure)
+				if (durationMs > 60_000) {
+					log(`Session error/lost: ${name}`);
+					config = loadConfig();
+					updateState(config, name, "error", durationMs);
+					activeSessions.delete(name);
+				}
+			}
+		}
+	};
+
+	// Run every 30 seconds
+	const intervalId = setInterval(tick, 30_000);
+
+	// Graceful shutdown
+	const shutdown = () => {
+		log("Shutting down...");
+		clearInterval(intervalId);
+		process.exit(0);
+	};
+	process.on("SIGINT", shutdown);
+	process.on("SIGTERM", shutdown);
+
+	// Initial tick
+	await tick();
+}
+
+async function runNow(scheduleName: string) {
+	const config = loadConfig();
+	const schedule = config.schedules?.find((s) => s.name === scheduleName);
+
+	if (!schedule) {
+		console.error(`Schedule "${scheduleName}" not found in config.yaml`);
+		console.error(
+			`Available: ${config.schedules?.map((s) => s.name).join(", ") ?? "none"}`,
+		);
+		process.exit(1);
+	}
+
+	log(`Running schedule immediately: ${scheduleName}`);
+	const success = await fireSchedule(schedule, config);
+
+	if (!success) {
+		updateState(config, scheduleName, "error", 0);
+		process.exit(1);
+	}
+
+	// Poll until done
+	log("Waiting for session to complete...");
+	const active = activeSessions.get(scheduleName);
+	if (!active) {
+		log("No active session to track (may have been queued)");
+		return;
+	}
+
+	const pollInterval = setInterval(async () => {
+		const result = await pollSession(active);
+		if (result === "done") {
+			const durationMs = Date.now() - active.startedAt;
+			log(`Done (${Math.round(durationMs / 1000)}s)`);
+			const freshConfig = loadConfig();
+			updateState(freshConfig, scheduleName, "ok", durationMs);
+			clearInterval(pollInterval);
+		} else if (result === "error") {
+			const durationMs = Date.now() - active.startedAt;
+			if (durationMs > 60_000) {
+				log("Session lost");
+				const freshConfig = loadConfig();
+				updateState(freshConfig, scheduleName, "error", durationMs);
+				clearInterval(pollInterval);
+				process.exit(1);
+			}
+		}
+	}, 5_000);
+}
+
+// --- Entry point ---
+
+if (typeof args["run-now"] === "string") {
+	await runNow(args["run-now"]);
+} else {
+	await runLoop();
+}

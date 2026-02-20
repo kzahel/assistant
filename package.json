@@ -1,0 +1,32 @@
+{
+	"name": "assistant",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsx lib/build.ts",
+		"check": "tsc --noEmit",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"browser:setup": "npx playwright install chromium",
+		"browser:server": "tsx lib/browser/server.ts"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.0",
+		"@types/node": "^22.0.0",
+		"@types/nodemailer": "^7.0.10",
+		"tsx": "^4.19.0",
+		"typescript": "^5.7.0"
+	},
+	"dependencies": {
+		"@hono/node-server": "^1.14.1",
+		"cron-parser": "^4.9.0",
+		"gray-matter": "^4.0.3",
+		"hono": "^4.7.4",
+		"imapflow": "^1.2.10",
+		"nodemailer": "^8.0.1",
+		"playwright": "^1.50.1",
+		"yaml": "^2.7.0",
+		"zod": "^3.24.2"
+	}
+}
