@@ -101,16 +101,22 @@ browser close    # close current tab when done with a subreddit
 
 ```
 1. browser start (kill stale chrome first if needed)
-2. For each configured subreddit:
-   a. browser open https://old.reddit.com/r/<sub>
-   b. evaluate JS to extract post listing
-   c. Optionally check /new for latest posts
-   d. For high-signal posts (high score, relevant keywords), click through and extract top comments
+2. For each configured subreddit, scrape TWO pages:
+   a. browser open https://old.reddit.com/r/<sub>/top?t=day
+      - Extract posts — these are the highest-signal threads from the last 24h
+   b. browser open https://old.reddit.com/r/<sub>/new
+      - Extract posts — these catch long-tail/low-upvote threads that the algorithm buries
+      - Important: many relevant niche threads never reach "hot" or "top"
+   c. Deduplicate across both pages (by URL)
+   d. If topics are configured, filter posts: keep any post whose title contains
+      a topic keyword (case-insensitive substring match). If no topics configured,
+      keep all posts.
+   e. For high-signal posts (high score, relevant keywords), click through and extract top comments
 3. Compile digest:
    - Group by subreddit
    - Rank by score/relevance
    - Summarize key threads
-   - Flag posts worth commenting on
+   - Flag posts worth commenting on or responding to
 4. browser close tabs when done
 ```
 

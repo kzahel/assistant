@@ -12,10 +12,80 @@
  */
 
 import { existsSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import matter from "gray-matter";
 import YAML from "yaml";
+
+// --- .env loader ---
+
+function loadEnv(dir: string): Record<string, string> {
+	const envPath = join(dir, ".env");
+	try {
+		const raw = readFileSync(envPath, "utf-8");
+		const vars: Record<string, string> = {};
+		for (const line of raw.split("\n")) {
+			const trimmed = line.trim();
+			if (!trimmed || trimmed.startsWith("#")) continue;
+			const eq = trimmed.indexOf("=");
+			if (eq === -1) continue;
+			vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
+		}
+		return vars;
+	} catch {
+		return {};
+	}
+}
+
+// --- Enrichers ---
+
+type Enricher = (env: Record<string, string>, config: Record<string, unknown>) => Promise<Record<string, string>>;
+
+const enrichers: Enricher[] = [
+	// Telegram: resolve bot username from token
+	async (env) => {
+		const token = env.TELEGRAM_BOT_TOKEN;
+		if (!token) return {};
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 3000);
+		try {
+			const res = await fetch(
+				`https://api.telegram.org/bot${token}/getMe`,
+				{ signal: controller.signal },
+			);
+			const data = (await res.json()) as {
+				ok: boolean;
+				result?: { username?: string };
+			};
+			if (data.ok && data.result?.username) {
+				return { telegram_bot_username: `@${data.result.username}` };
+			}
+		} catch {
+			console.warn("WARN: Telegram enrichment failed (timeout or network error)");
+		} finally {
+			clearTimeout(timer);
+		}
+		return {};
+	},
+];
+
+async function runEnrichers(
+	env: Record<string, string>,
+	config: Record<string, unknown>,
+): Promise<Record<string, string>> {
+	const results = await Promise.allSettled(
+		enrichers.map((fn) => fn(env, config)),
+	);
+	const merged: Record<string, string> = {};
+	for (const r of results) {
+		if (r.status === "fulfilled") {
+			Object.assign(merged, r.value);
+		} else {
+			console.warn(`WARN: Enricher failed: ${r.reason}`);
+		}
+	}
+	return merged;
+}
 
 // --- CLI args ---
 
@@ -41,6 +111,8 @@ if (!instanceDir) {
 const resolvedInstance = resolve(instanceDir.replace(/^~/, process.env.HOME!));
 const resolvedSkills = resolve(skillsDir.replace(/^~/, process.env.HOME!));
 const resolvedEngine = resolve(engineDir.replace(/^~/, process.env.HOME!));
+
+const instanceEnv = loadEnv(resolvedInstance);
 
 // --- Read inputs ---
 
@@ -133,13 +205,12 @@ if (existsSync(resolvedSkills)) {
 
 skills.sort((a, b) => a.name.localeCompare(b.name));
 
-// Validate: every configured skill must exist
+// Validate: every configured skill should have a SKILL.md (warn if not — may be config-only)
 for (const name of configuredSkills) {
 	if (!skills.find((s) => s.name === name)) {
-		console.error(
-			`ERROR: Skill "${name}" referenced in config.yaml but no SKILL.md found`,
+		console.warn(
+			`WARN: Skill "${name}" in config.yaml has no SKILL.md (treating as config-only)`,
 		);
-		process.exit(1);
 	}
 }
 
@@ -223,7 +294,7 @@ function buildToolPaths(): string {
 
 // --- Assemble CLAUDE.md ---
 
-function render(tmpl: string): string {
+function render(tmpl: string, enriched: Record<string, string>): string {
 	let output = tmpl;
 
 	// Simple partial replacements
@@ -252,13 +323,28 @@ function render(tmpl: string): string {
 		output = output.replace("{{/if}}", "");
 	}
 
+	// Enriched values: conditional blocks and simple replacements
+	for (const [key, value] of Object.entries(enriched)) {
+		// {{#if key}}...content...{{/if}} — include block if value is truthy
+		const ifRegex = new RegExp(`\\{\\{#if ${key}\\}\\}\\n?([\\s\\S]*?)\\{\\{/if\\}\\}\\n?`, "g");
+		output = output.replace(ifRegex, value ? "$1" : "");
+		// {{key}} — simple replacement
+		output = output.replaceAll(`{{${key}}}`, value);
+	}
+
+	// Remove any remaining unresolved enrichment conditionals (missing keys)
+	output = output.replace(/\{\{#if \w+\}\}\n?[\s\S]*?\{\{\/if\}\}\n?/g, "");
+
 	// Clean up any double blank lines
 	output = output.replace(/\n{3,}/g, "\n\n");
 
 	return output;
 }
 
-const claudeMd = render(template);
+// --- Main (async for enrichers) ---
+
+const enriched = await runEnrichers(instanceEnv, config as unknown as Record<string, unknown>);
+const claudeMd = render(template, enriched);
 
 // --- Write output ---
 
@@ -276,3 +362,7 @@ console.log(`  Configured: ${[...configuredSkills].join(", ") || "(none)"}`);
 console.log(`  Soul: ${soul ? "yes" : "no"}`);
 console.log(`  Projects: ${projects ? "yes" : "no"}`);
 console.log(`  Tools: ${tools.map((t) => t.name).join(", ") || "(none)"}`);
+const enrichedKeys = Object.keys(enriched);
+if (enrichedKeys.length > 0) {
+	console.log(`  Enriched: ${enrichedKeys.map((k) => `${k}=${enriched[k]}`).join(", ")}`);
+}

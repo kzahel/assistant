@@ -29,6 +29,10 @@ No project references configured yet.
 
 {{> skill_index}}
 
+{{#if telegram_bot_username}}
+- **Telegram bot:** {{telegram_bot_username}}
+{{/if}}
+
 ## Tool Paths
 
 Tools are auto-discovered from the engine's `lib/*-cli.ts` files. When a SKILL.md references a tool by name (e.g., `browser <command>`), use the full command shown here:
