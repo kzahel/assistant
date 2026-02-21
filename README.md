@@ -8,7 +8,7 @@ The engine provides shared capabilities (skills, tools, build system). Each assi
 
 **Minimum required to be useful, not a framework.** Read and send email. Browse the web. Message you on Telegram. Run tasks on a schedule. Fully self-modifying — the agent understands its own format and evolves organically. That's the baseline. You choose the security posture, the tasks, and who can talk to it.
 
-**Convention over runtime.** Like how `CLAUDE.md` tells any tool about a project, the assistant format tells any agent session about a personality, skills, and work habits. The format is the product — runtimes are interchangeable.
+**The agent is the runtime.** Claude Code (or Codex, or whatever) does the actual work — API calls, tool execution, reasoning. This engine just gives it persistent identity, a few useful tools, and a way to be invoked on a schedule or from a message. There's real code in `lib/` (browser server, IMAP client, etc.), but it's thin wrappers the agent calls as CLIs. The agent loop itself is someone else's problem. This also means your provider subscription, billing, usage dashboard, telemetry, and permission system all still work — we're not bypassing anything. And because we re-use the provider's live session between messages, conversation context is maintained without re-sending the full history on every turn.
 
 **Skills are prompts, not plugins.** Skills follow the [SKILL.md](https://agentskills.io/specification) standard — markdown instructions any agent can read. No loader, no lifecycle hooks, no runtime coupling. A skill written for this format works in Claude Code, Codex, Copilot, Gemini CLI, Goose, or Cursor without modification.
 
@@ -16,55 +16,59 @@ The engine provides shared capabilities (skills, tools, build system). Each assi
 
 **Fully self-modifying.** The assistant can edit any of its own files — memory, config, personality, even add new skills. This isn't a formal system; it happens organically as the assistant works. Git history is the audit trail. You decide what guardrails to set.
 
-## Why This Exists
+## How This Relates to Other Projects
 
-The AI agent ecosystem has converged on standards for individual pieces — [SKILL.md](https://agentskills.io/specification) for skills, [AGENTS.md](https://agents.md/) for project context, [MCP](https://modelcontextprotocol.io/) for tool protocols — all under the [Agentic AI Foundation (AAIF)](https://aaif.io/). Meanwhile, the "Claw" category (OpenClaw, ZeroClaw, NanoClaw, etc.) has dozens of runtime daemons that wrap LLM APIs into local assistants with messaging, scheduling, and memory.
+There's a growing ecosystem of personal AI assistants — OpenClaw, NanoClaw, ZeroClaw, and others (collectively called "Claws"). They're gateway daemons that wrap LLM APIs and manage the full agent loop: API calls, tool execution, session state, channel routing, plugin systems.
 
-**The gap:** no standard defines a portable *assistant instance* — the thing that says "I am an assistant with this personality, these skills, this schedule, and this behavior per invocation mode."
+This project is smaller and more opinionated. It doesn't manage the agent loop — it lets Claude Code (or Codex, etc.) be the agent and just gives it tools, identity, and scheduling. The `lib/` directory has real runtime code (browser server, IMAP client, Telegram bot), but it's all thin CLIs the agent invokes. There's no plugin system, no gateway, no session management.
 
-- SKILL.md defines skills but not the assistant that uses them
-- AGENTS.md defines project context but not persona/identity/scheduling
-- Claws have the operational layer but lock it to their runtime — skills, identity, and memory written for one don't transfer to another
+The tradeoff: Claws are more full-featured out of the box. This is more transparent — it's just files and scripts, easy to understand and modify. Whether that's better depends on what you want.
 
-**Claws are runtimes. We're a format.** A Claw wraps the LLM — it manages API calls, tool execution, session state, and channel routing. We don't wrap the LLM. We configure existing agents (Claude Code, Codex) and give them persistent identity, skills, scheduling, and multi-channel access. The agent is Claude Code; we're the assistant layer on top.
-
-| Aspect | Claws (OpenClaw et al.) | This format |
-|--------|------------------------|-------------|
-| **Core abstraction** | Gateway/daemon wrapping LLM APIs | Directory convention + scheduler invoking existing agents |
-| **Skill model** | Runtime plugins (TypeScript/Python modules) | SKILL.md files (markdown instructions the agent reads) |
-| **Portability** | Locked to that Claw's runtime | Any agent that reads CLAUDE.md / AGENTS.md |
-| **Security model** | Application-level permissions within the daemon | Inherits from the underlying agent |
+This project also builds on emerging standards where possible: [SKILL.md](https://agentskills.io/specification) for skill definitions, [AGENTS.md](https://agents.md/) for agent discovery. Skills are markdown files, not runtime plugins, so they work across tools.
 
 See [docs/design/comparison.md](docs/design/comparison.md) for detailed comparisons with OpenClaw, Fabric, Oracle Agent Spec, PAI, ElizaOS, and others.
 
 ## Architecture
 
+**Engine** (this repo) = capabilities. Public, shared.
+
 ```
-Engine (this repo)                    Instance (private, per-assistant)
-~/code/assistant/                     ~/.assistant-data/assistants/<name>/
-├── skills/                           ├── config.yaml        ← required
-│   ├── browser/SKILL.md              ├── soul.md            ← personality
-│   ├── gmail/SKILL.md                ├── user.md            ← user context
-│   ├── git-sync/SKILL.md             ├── projects.md        ← project refs
-│   └── reddit/SKILL.md               ├── heart.md           ← pronouns, prefs
-├── lib/                              ├── .env               ← secrets
-│   ├── build.ts                      ├── memory/            ← learnings, logs
-│   ├── browser-cli.ts                ├── state/             ← skill checkpoints
-│   ├── gmail-cli.ts                  ├── sessions/          ← conversation history
-│   ├── git-sync-cli.ts               ├── CLAUDE.md          ← compiled (generated)
-│   ├── scheduler.ts                  └── AGENTS.md          ← symlink → CLAUDE.md
-│   └── browser/                      The instance never references the engine
-│       ├── server.ts                 directly. build.ts bridges the two.
-│       ├── routes.ts
-│       └── playwright.ts
+~/code/assistant/
+├── skills/              # SKILL.md definitions
+│   ├── browser/
+│   ├── gmail/
+│   ├── reddit/
+│   ├── telegram/
+│   └── git-sync/
+├── lib/                 # Tool CLIs + build system
+│   ├── build.ts
+│   ├── scheduler.ts
+│   ├── browser-cli.ts
+│   ├── gmail-cli.ts
+│   └── telegram-cli.ts
 ├── templates/
-│   └── claude.md
+│   └── claude.md        # CLAUDE.md template
 └── docs/design/
 ```
 
-**Engine** = capabilities (skills, tool CLIs, build script, template). Public, shared.
+**Instance** (private, per-assistant) = identity + state. Never references the engine.
 
-**Instance** = identity (personality, user info, secrets, memory). Private, per-assistant.
+```
+~/.assistant-data/assistants/<name>/
+├── config.yaml          # required — name, skill config, schedules
+├── soul.md              # personality / tone
+├── user.md              # who the user is
+├── projects.md          # project context
+├── heart.md             # pronouns, accessibility
+├── .env                 # secrets
+├── memory/              # learnings, activity logs
+├── state/               # skill checkpoints
+├── sessions/            # conversation history
+├── CLAUDE.md            # compiled by build.ts (generated)
+└── AGENTS.md            # symlink → CLAUDE.md
+```
+
+`build.ts` bridges the two — it reads the engine's skills and template, merges with instance files, and writes the compiled `CLAUDE.md`.
 
 ## Creating a New Assistant
 
