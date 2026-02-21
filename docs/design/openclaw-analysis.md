@@ -1,6 +1,6 @@
 # OpenClaw Architecture Analysis
 
-[OpenClaw](https://github.com/openclaw/openclaw) (~140K GitHub stars) is the most popular open-source personal AI assistant. It runs as a local daemon and uses messaging platforms (Signal, Telegram, Discord, WhatsApp, etc.) as its primary UI. This document is a detailed analysis of its architecture — what's clever, what's limiting, and what informs our own design.
+[OpenClaw](https://github.com/openclaw/openclaw) (~215K GitHub stars as of Feb 2026, up from ~140K in Jan) is the most popular open-source personal AI assistant. It runs as a local daemon and uses messaging platforms (Signal, Telegram, Discord, WhatsApp, etc.) as its primary UI. This document is a detailed analysis of its architecture — what's clever, what's limiting, and what informs our own design.
 
 ## Overview
 

@@ -1,12 +1,13 @@
 /**
  * Generic channel abstraction — session management, chat history,
- * message building, and session orchestration via the Yep Anywhere API.
+ * message building, and session orchestration.
  *
  * Transport-specific implementations (Telegram, etc.) live in channels/.
  */
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { PermissionMode, PermissionRules, SessionExecutor } from "./session-executor.js";
 import { ensureDir } from "./utils.js";
 
 // --- Types ---
@@ -27,6 +28,7 @@ export interface ChatMessage {
 export interface ChannelSessionEntry {
 	sessionId: string;
 	startedDate: string; // YYYY-MM-DD
+	permissionMode?: PermissionMode;
 }
 
 export interface ChannelTransport {
@@ -37,8 +39,7 @@ export interface ChannelTransport {
 
 export interface ChannelContext {
 	instanceDir: string;
-	yaBase: string;
-	projectId: string;
+	executor: SessionExecutor;
 	log: (msg: string) => void;
 	appendActivity: (entry: Record<string, unknown>) => void;
 }
@@ -77,15 +78,44 @@ export class SessionManager {
 			this.save(state);
 			return undefined;
 		}
-		return entry.sessionId;
+		return entry.sessionId || undefined;
 	}
 
-	set(chatId: string, sessionId: string): void {
+	getEntry(chatId: string): ChannelSessionEntry | undefined {
+		const state = this.load();
+		const entry = state[chatId];
+		if (!entry) return undefined;
+		const today = new Date().toISOString().slice(0, 10);
+		if (entry.startedDate !== today) {
+			delete state[chatId];
+			this.save(state);
+			return undefined;
+		}
+		return entry;
+	}
+
+	set(chatId: string, sessionId: string, permissionMode?: PermissionMode): void {
 		const state = this.load();
 		state[chatId] = {
 			sessionId,
 			startedDate: new Date().toISOString().slice(0, 10),
+			permissionMode,
 		};
+		this.save(state);
+	}
+
+	setPermissionMode(chatId: string, mode: PermissionMode): void {
+		const state = this.load();
+		const entry = state[chatId];
+		if (entry) {
+			entry.permissionMode = mode;
+		} else {
+			state[chatId] = {
+				sessionId: "",
+				startedDate: new Date().toISOString().slice(0, 10),
+				permissionMode: mode,
+			};
+		}
 		this.save(state);
 	}
 
@@ -183,6 +213,7 @@ export function buildChannelMessage(opts: BuildChannelMessageOpts): string {
 		"5. Match conversational tone — this is chat, not a terminal.",
 		`6. For short replies, use \`--no-parse\` to avoid escaping issues. For rich content, write markdown to a file and send with \`--message-file <path> --markdown\`.`,
 		"7. If a task takes significant work, send a brief acknowledgment first, then the result.",
+		"8. IMPORTANT: Before launching any sub-agent (Task tool), send a short progress message to the user saying what you're about to do (e.g. \"Researching X...\"). Sub-agents take a long time and the user needs to know work is happening. This rule overrides the message limit — progress updates don't count toward the 1-3 message limit.",
 		"",
 		historyBlock,
 		attachmentBlock,
@@ -211,6 +242,8 @@ export interface SessionOrchestrateOpts {
 	sendCommand: string;
 	transportName: string;
 	sendReply: (chatId: string, text: string) => Promise<void>;
+	permissionMode?: PermissionMode;
+	permissions?: PermissionRules;
 }
 
 export async function orchestrateSession(opts: SessionOrchestrateOpts): Promise<void> {
@@ -225,35 +258,28 @@ export async function orchestrateSession(opts: SessionOrchestrateOpts): Promise<
 		sendCommand,
 		transportName,
 		sendReply,
+		permissionMode,
+		permissions,
 	} = opts;
 
-	const existingSessionId = sessionManager.get(chatId);
+	const entry = sessionManager.getEntry(chatId);
+	const mode = permissionMode ?? entry?.permissionMode;
 	let sessionStarted = false;
 
-	if (existingSessionId) {
+	if (entry?.sessionId) {
 		const resumeMessage = attachments?.length
 			? `${messageText}\n\nAttachments:\n${attachments.map((a) => `- ${a}`).join("\n")}`
 			: messageText;
-		const res = await fetch(
-			`${ctx.yaBase}/api/projects/${ctx.projectId}/sessions/${existingSessionId}/resume`,
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Yep-Anywhere": "true",
-				},
-				body: JSON.stringify({
-					message: resumeMessage,
-					mode: "bypassPermissions",
-				}),
-			},
-		);
 
-		if (res.status === 200) {
-			ctx.log(`  ${transportName} session resumed: ${existingSessionId}`);
+		const ok = await ctx.executor.resume(entry.sessionId, resumeMessage, {
+			permissionMode: mode,
+			permissions,
+		});
+		if (ok) {
+			ctx.log(`  ${transportName} session resumed: ${entry.sessionId}`);
 			sessionStarted = true;
 		} else {
-			ctx.log(`  Resume failed (${res.status}), starting fresh`);
+			ctx.log(`  Resume failed, starting fresh`);
 			sessionManager.clear(chatId);
 		}
 	}
@@ -268,27 +294,21 @@ export async function orchestrateSession(opts: SessionOrchestrateOpts): Promise<
 			history,
 			attachments,
 		});
-		const res = await fetch(`${ctx.yaBase}/api/projects/${ctx.projectId}/sessions`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Yep-Anywhere": "true",
-			},
-			body: JSON.stringify({
-				message: sessionMessage,
-				mode: "bypassPermissions",
-			}),
-		});
 
-		if (res.status === 200) {
-			const data = (await res.json()) as { sessionId: string };
-			ctx.log(`  ${transportName} session started: ${data.sessionId}`);
-			sessionManager.set(chatId, data.sessionId);
-		} else if (res.status === 202) {
-			ctx.log(`  ${transportName} session queued`);
-		} else {
-			const body = await res.text();
-			ctx.log(`  ${transportName} session failed (${res.status}): ${body}`);
+		try {
+			const result = await ctx.executor.start(sessionMessage, {
+				cwd: ctx.instanceDir,
+				permissionMode: mode,
+				permissions,
+			});
+			if (result.status === "started") {
+				ctx.log(`  ${transportName} session started: ${result.sessionId}`);
+				sessionManager.set(chatId, result.sessionId, mode);
+			} else {
+				ctx.log(`  ${transportName} session queued`);
+			}
+		} catch (err) {
+			ctx.log(`  ${transportName} session failed: ${(err as Error).message}`);
 			await sendReply(chatId, "Sorry, I couldn't start a session right now. Try again in a moment.");
 		}
 	}

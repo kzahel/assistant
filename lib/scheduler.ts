@@ -3,12 +3,15 @@
 /**
  * Smart cron scheduler for assistant instances.
  *
- * Reads schedules from config.yaml, fires Claude Code sessions via the
- * Yep Anywhere server API at the right times, and tracks run state.
+ * Reads schedules from config.yaml, fires Claude Code sessions at the right
+ * times, and tracks run state. Supports multiple executors (Yep Anywhere
+ * server API, or Claude CLI directly).
+ *
  * Also polls Telegram for incoming messages and spawns sessions for them.
  *
  * Usage:
  *   scheduler --instance ~/assistant-data/assistants/my-assistant
+ *   scheduler --instance ~/assistant-data/assistants/my-assistant --executor claude
  *   scheduler --instance ~/assistant-data/assistants/my-assistant --run-now morning-digest
  */
 
@@ -23,6 +26,12 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import cronParser from "cron-parser";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import {
+	type PermissionRules,
+	type SessionExecutor,
+	createClaudeCliExecutor,
+	createYepAnywhereExecutor,
+} from "./session-executor.js";
 import { loadEnv } from "./utils.js";
 
 // --- Types ---
@@ -44,7 +53,7 @@ interface Schedule {
 	name: string;
 	cron: string;
 	skills: SkillRef[];
-	output?: string;
+	output?: string | string[];
 	prompt?: string;
 	enabled?: boolean;
 	_state?: ScheduleState;
@@ -52,6 +61,7 @@ interface Schedule {
 
 interface Config {
 	name: string;
+	executor?: string;
 	skills?: Record<string, Record<string, unknown>>;
 	schedules?: Schedule[];
 }
@@ -59,7 +69,6 @@ interface Config {
 interface ActiveSession {
 	scheduleName: string;
 	sessionId: string;
-	processId: string;
 	startedAt: number;
 }
 
@@ -69,6 +78,7 @@ const { values: args } = parseArgs({
 	options: {
 		instance: { type: "string" },
 		port: { type: "string", default: "3400" },
+		executor: { type: "string" },
 		"run-now": { type: "string" },
 	},
 	strict: false,
@@ -79,14 +89,11 @@ const instanceDir = resolve(
 );
 if (!instanceDir || !existsSync(join(instanceDir, "config.yaml"))) {
 	console.error(
-		"Usage: scheduler --instance <dir> [--port 3400] [--run-now <name>]",
+		"Usage: scheduler --instance <dir> [--executor yep|claude] [--port 3400] [--run-now <name>]",
 	);
 	console.error("  <dir> must contain a config.yaml");
 	process.exit(1);
 }
-
-const YA_PORT = Number(args.port) || 3400;
-const YA_BASE = `http://127.0.0.1:${YA_PORT}`;
 
 // --- Helpers ---
 
@@ -116,7 +123,7 @@ function appendActivity(entry: Record<string, unknown>) {
 	);
 }
 
-function buildSessionMessage(schedule: Schedule, config: Config): string {
+function buildSessionMessage(schedule: Schedule, _config: Config): string {
 	const skillLines = schedule.skills
 		.map((s) => {
 			let line = `- ${s.skill}`;
@@ -125,8 +132,14 @@ function buildSessionMessage(schedule: Schedule, config: Config): string {
 		})
 		.join("\n");
 
-	const outputLine = schedule.output
-		? `\nDeliver the combined output via the ${schedule.output} skill.`
+	const outputs = Array.isArray(schedule.output)
+		? schedule.output
+		: schedule.output
+			? [schedule.output]
+			: [];
+	const outputLine = outputs.length > 0
+		? `\nDeliver the combined output via each of these channels: ${outputs.join(", ")}. Send to every listed channel.`
+		+ `\nWhen sending to telegram, always start the message with a header line like "📋 <Schedule Name>" (e.g. "📋 Morning Digest") followed by a blank line, so it's clearly distinguishable from regular conversation messages.`
 		: "";
 
 	const instructions = schedule.prompt ?? "When done, summarize what you did.";
@@ -144,10 +157,62 @@ function buildSessionMessage(schedule: Schedule, config: Config): string {
 	].join("\n");
 }
 
+// --- Executor setup ---
+
+function createExecutor(config: Config): SessionExecutor {
+	const executorType = args.executor ?? config.executor ?? "yep";
+
+	if (executorType === "claude") {
+		log("Using Claude CLI executor");
+		return createClaudeCliExecutor({ cwd: instanceDir });
+	}
+
+	const port = Number(args.port) || 3400;
+	const baseUrl = `http://127.0.0.1:${port}`;
+	const projectId = toProjectId(instanceDir);
+	log(`Using Yep Anywhere executor (${baseUrl})`);
+	return createYepAnywhereExecutor({ baseUrl, projectId });
+}
+
+const initialConfig = loadConfig();
+const executor = createExecutor(initialConfig);
+
+// --- Cron permission rules ---
+// Cron sessions process untrusted content (scraped web pages, Reddit, HN).
+// Deny patterns that could indicate prompt injection exploitation.
+// Unmatched commands fall through to permissionMode behavior.
+const CRON_PERMISSIONS: PermissionRules = {
+	deny: [
+		"Bash(*| bash*)",
+		"Bash(*| sh*)",
+		"Bash(*| zsh*)",
+		"Bash(curl *)",
+		"Bash(wget *)",
+		"Bash(pip install *)",
+		"Bash(pip3 install *)",
+		"Bash(npm install *)",
+		"Bash(npx -y *)",
+		"Bash(ssh *)",
+		"Bash(scp *)",
+		"Bash(nc *)",
+		"Bash(ncat *)",
+		"Bash(python* -c *)",
+		"Bash(node -e *)",
+		"Bash(eval *)",
+		"Bash(exec *)",
+		"Bash(*crontab*)",
+		"Bash(*~/.bashrc*)",
+		"Bash(*~/.profile*)",
+		"Bash(*~/.ssh/*)",
+		"Bash(*authorized_keys*)",
+		"Bash(chmod +s *)",
+		"Bash(base64 -d*| *)",
+	],
+};
+
 // --- Session management ---
 
 const activeSessions = new Map<string, ActiveSession>();
-const projectId = toProjectId(instanceDir);
 
 async function fireSchedule(
 	schedule: Schedule,
@@ -158,43 +223,23 @@ async function fireSchedule(
 	log(`Firing schedule: ${schedule.name}`);
 
 	try {
-		const res = await fetch(`${YA_BASE}/api/projects/${projectId}/sessions`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Yep-Anywhere": "true",
-			},
-			body: JSON.stringify({
-				message,
-				mode: "bypassPermissions",
-			}),
+		const result = await executor.start(message, {
+			cwd: instanceDir,
+			permissions: CRON_PERMISSIONS,
 		});
 
-		if (res.status === 200) {
-			const data = (await res.json()) as {
-				sessionId: string;
-				processId: string;
-			};
-			log(`  Session started: ${data.sessionId}`);
+		if (result.status === "started") {
+			log(`  Session started: ${result.sessionId}`);
 			activeSessions.set(schedule.name, {
 				scheduleName: schedule.name,
-				sessionId: data.sessionId,
-				processId: data.processId,
+				sessionId: result.sessionId,
 				startedAt: Date.now(),
 			});
 			return true;
 		}
 
-		if (res.status === 202) {
-			const data = (await res.json()) as { queueId: string; position: number };
-			log(`  Queued at position ${data.position}`);
-			// Treat as fired — we won't have a sessionId to track until it starts
-			return true;
-		}
-
-		const body = await res.text();
-		log(`  Failed (${res.status}): ${body}`);
-		return false;
+		log(`  Queued: ${result.sessionId}`);
+		return true;
 	} catch (err) {
 		log(`  Error: ${(err as Error).message}`);
 		return false;
@@ -204,19 +249,8 @@ async function fireSchedule(
 async function pollSession(
 	active: ActiveSession,
 ): Promise<"running" | "done" | "error"> {
-	try {
-		const res = await fetch(
-			`${YA_BASE}/api/projects/${projectId}/sessions/${active.sessionId}/metadata`,
-			{ headers: { "X-Yep-Anywhere": "true" } },
-		);
-
-		if (!res.ok) return "error";
-
-		const data = (await res.json()) as { ownership: { owner: string } };
-		return data.ownership.owner === "none" ? "done" : "running";
-	} catch {
-		return "error";
-	}
+	const result = await executor.poll(active.sessionId);
+	return result.status;
 }
 
 function updateState(
@@ -297,7 +331,7 @@ function createChannels(): ChannelTransport[] {
 			token: telegramToken,
 			users: telegramUsers,
 			instanceDir,
-			ctx: { instanceDir, yaBase: YA_BASE, projectId, log, appendActivity },
+			ctx: { instanceDir, executor, log, appendActivity },
 			transcriptionConfig: buildTranscriptionConfig(),
 		});
 		if (transport.enabled) {
@@ -356,7 +390,7 @@ async function runLoop() {
 		}
 	}
 
-	log(`Scheduler started for ${config.name}`);
+	log(`Scheduler started for ${config.name} (executor: ${executor.name})`);
 	logTrackers();
 
 	const tick = async () => {
@@ -400,6 +434,7 @@ async function runLoop() {
 			if (result === "done") {
 				const durationMs = Date.now() - active.startedAt;
 				log(`Session completed: ${name} (${Math.round(durationMs / 1000)}s)`);
+				executor.cleanup(active.sessionId);
 				config = loadConfig();
 				updateState(config, name, "ok", durationMs);
 				activeSessions.delete(name);
@@ -408,6 +443,7 @@ async function runLoop() {
 				// Only count as error if we've been polling for a while (not just a transient fetch failure)
 				if (durationMs > 60_000) {
 					log(`Session error/lost: ${name}`);
+					executor.cleanup(active.sessionId);
 					config = loadConfig();
 					updateState(config, name, "error", durationMs);
 					activeSessions.delete(name);
@@ -432,6 +468,9 @@ async function runLoop() {
 		log("Shutting down...");
 		clearInterval(intervalId);
 		for (const id of channelIntervalIds) clearInterval(id);
+		for (const [, active] of activeSessions) {
+			executor.cleanup(active.sessionId);
+		}
 		process.exit(0);
 	};
 	process.on("SIGINT", shutdown);
@@ -453,7 +492,7 @@ async function runNow(scheduleName: string) {
 		process.exit(1);
 	}
 
-	log(`Running schedule immediately: ${scheduleName}`);
+	log(`Running schedule immediately: ${scheduleName} (executor: ${executor.name})`);
 	const success = await fireSchedule(schedule, config);
 
 	if (!success) {
@@ -474,6 +513,7 @@ async function runNow(scheduleName: string) {
 		if (result === "done") {
 			const durationMs = Date.now() - active.startedAt;
 			log(`Done (${Math.round(durationMs / 1000)}s)`);
+			executor.cleanup(active.sessionId);
 			const freshConfig = loadConfig();
 			updateState(freshConfig, scheduleName, "ok", durationMs);
 			clearInterval(pollInterval);
@@ -481,6 +521,7 @@ async function runNow(scheduleName: string) {
 			const durationMs = Date.now() - active.startedAt;
 			if (durationMs > 60_000) {
 				log("Session lost");
+				executor.cleanup(active.sessionId);
 				const freshConfig = loadConfig();
 				updateState(freshConfig, scheduleName, "error", durationMs);
 				clearInterval(pollInterval);

@@ -13,7 +13,126 @@ import {
 	SessionManager,
 	orchestrateSession,
 } from "../channel.js";
+import type { PermissionMode } from "../session-executor.js";
 import { transcribeAudio, type TranscriptionConfig } from "../transcription.js";
+
+// --- Command registry ---
+
+const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
+	bypassPermissions: "yolo (auto-approve everything)",
+	default: "careful (approve writes, auto-approve reads)",
+	plan: "readonly (read-only, no mutations)",
+};
+
+interface CommandContext {
+	chatId: string;
+	user: ChannelUser;
+	sessionManager: SessionManager;
+	pendingChats: Set<string>;
+	contextWarned: Set<string>;
+	ctx: ChannelContext;
+	sendReply: (chatId: string, text: string) => Promise<void>;
+}
+
+interface Command {
+	description: string;
+	handler: (cmdCtx: CommandContext) => Promise<void>;
+}
+
+function createCommands(): Record<string, Command> {
+	return {
+		"/new": {
+			description: "Reset session — start fresh",
+			handler: async ({ chatId, user, sessionManager, contextWarned, ctx, sendReply }) => {
+				sessionManager.clear(chatId);
+				contextWarned.delete(chatId);
+				ctx.log(`Telegram: session reset for ${user.name}`);
+				await sendReply(chatId, "Session reset. Next message starts fresh.");
+			},
+		},
+		"/stop": {
+			description: "Abort current session",
+			handler: async ({
+				chatId,
+				user,
+				sessionManager,
+				pendingChats,
+				contextWarned,
+				ctx,
+				sendReply,
+			}) => {
+				const sessionId = sessionManager.get(chatId);
+				if (sessionId) {
+					await ctx.executor.cleanup(sessionId);
+					sessionManager.clear(chatId);
+					pendingChats.delete(chatId);
+					contextWarned.delete(chatId);
+					ctx.log(`Telegram: session stopped for ${user.name}`);
+					await sendReply(chatId, "Session stopped.");
+				} else {
+					await sendReply(chatId, "No active session.");
+				}
+			},
+		},
+		"/yolo": {
+			description: "Auto-approve everything (default)",
+			handler: async ({ chatId, sessionManager, sendReply }) => {
+				sessionManager.setPermissionMode(chatId, "bypassPermissions");
+				await sendReply(chatId, "Mode: yolo — auto-approve everything.");
+			},
+		},
+		"/careful": {
+			description: "Auto-approve reads, prompt for writes",
+			handler: async ({ chatId, sessionManager, sendReply }) => {
+				sessionManager.setPermissionMode(chatId, "default");
+				await sendReply(
+					chatId,
+					"Mode: careful — reads auto-approved, writes need approval.",
+				);
+			},
+		},
+		"/readonly": {
+			description: "Read-only — no mutations allowed",
+			handler: async ({ chatId, sessionManager, sendReply }) => {
+				sessionManager.setPermissionMode(chatId, "plan");
+				await sendReply(chatId, "Mode: readonly — no mutations.");
+			},
+		},
+		"/status": {
+			description: "Show current session info",
+			handler: async ({ chatId, sessionManager, ctx, sendReply }) => {
+				const entry = sessionManager.getEntry(chatId);
+				const mode =
+					PERMISSION_MODE_LABELS[entry?.permissionMode ?? "bypassPermissions"];
+				if (!entry?.sessionId) {
+					await sendReply(chatId, `No active session.\nMode: ${mode}`);
+					return;
+				}
+				const result = await ctx.executor.poll(entry.sessionId);
+				const statusLine = result.pendingInput
+					? `${result.status} (waiting: ${result.pendingInput.type})`
+					: result.status;
+				const contextLine = result.contextUsage
+					? `\nContext: ${Math.round(result.contextUsage.percentage)}%`
+					: "";
+				await sendReply(
+					chatId,
+					`Session: ${entry.sessionId.slice(0, 8)}...\nMode: ${mode}\nStatus: ${statusLine}${contextLine}`,
+				);
+			},
+		},
+		"/help": {
+			description: "List available commands",
+			handler: async ({ chatId, sendReply }) => {
+				const commands = createCommands();
+				const lines = Object.entries(commands).map(
+					([cmd, { description }]) => `${cmd} — ${description}`,
+				);
+				await sendReply(chatId, lines.join("\n"));
+			},
+		},
+	};
+}
 
 // --- Telegram API ---
 
@@ -85,6 +204,12 @@ export interface TelegramUpdate {
 			file_name?: string;
 			file_size?: number;
 		};
+	};
+	callback_query?: {
+		id: string;
+		from: { id: number; first_name?: string; username?: string };
+		message?: { message_id: number; chat: { id: number } };
+		data?: string;
 	};
 }
 
@@ -178,7 +303,115 @@ export function createTelegramTransport(
 		return join(instanceDir, "state", "attachments", chatId);
 	}
 
+	// Track chats with in-flight sessions for typing keepalive
+	const pendingChats = new Set<string>();
+	// Track pending input notifications per chat (for inline keyboard approvals)
+	interface PendingInputInfo {
+		inputKey: string;
+		requestId: string;
+		messageId: number;
+		toolInfo: string;
+	}
+	const notifiedInputs = new Map<string, PendingInputInfo>();
+	// Track chats that have already been warned about high context usage
+	const contextWarned = new Set<string>();
+
+	async function refreshTypingIndicators(): Promise<void> {
+		for (const chatId of pendingChats) {
+			const sessionId = sessionManager.get(chatId);
+			if (!sessionId) {
+				pendingChats.delete(chatId);
+				notifiedInputs.delete(chatId);
+				continue;
+			}
+			const result = await ctx.executor.poll(sessionId);
+			if (result.status === "running") {
+				await sendTyping(chatId);
+				// Notify about pending permission prompts (once per prompt)
+				if (result.pendingInput) {
+					ctx.log(`Telegram: pendingInput=${JSON.stringify(result.pendingInput)}, hasRespondToInput=${!!ctx.executor.respondToInput}`);
+					const inputKey = `${result.pendingInput.type}:${result.pendingInput.toolName ?? ""}`;
+					const existing = notifiedInputs.get(chatId);
+					if (existing?.inputKey !== inputKey) {
+						const toolInfo = result.pendingInput.toolName ?? "Tool";
+						const promptText = result.pendingInput.prompt
+							? `\n${result.pendingInput.prompt.slice(0, 200)}`
+							: "";
+
+						// If executor supports respondToInput and we have a requestId, send inline keyboard
+						if (ctx.executor.respondToInput && result.pendingInput.requestId) {
+							const sent = (await tg("sendMessage", {
+								chat_id: chatId,
+								text: `🔧 ${toolInfo}${promptText}`,
+								reply_markup: {
+									inline_keyboard: [
+										[
+											{ text: "✓ Approve", callback_data: "approve" },
+											{ text: "✗ Deny", callback_data: "deny" },
+										],
+									],
+								},
+							})) as { message_id: number };
+							notifiedInputs.set(chatId, {
+								inputKey,
+								requestId: result.pendingInput.requestId,
+								messageId: sent.message_id,
+								toolInfo,
+							});
+						} else {
+							// Fallback: text-only notification (CLI executor or missing requestId)
+							await sendReply(
+								chatId,
+								`⏳ Waiting for approval (${toolInfo}) — open Yep Anywhere to respond, or /yolo to auto-approve.`,
+							);
+							notifiedInputs.set(chatId, {
+								inputKey,
+								requestId: "",
+								messageId: 0,
+								toolInfo,
+							});
+						}
+					}
+				} else {
+					// No pending input — if we had a notified approval, it was resolved externally
+					const existing = notifiedInputs.get(chatId);
+					if (existing?.messageId) {
+						try {
+							await tg("editMessageText", {
+								chat_id: chatId,
+								message_id: existing.messageId,
+								text: `✓ ${existing.toolInfo} — approved`,
+							});
+						} catch {
+							// Message may already be edited or deleted
+						}
+						notifiedInputs.delete(chatId);
+					}
+				}
+				// Warn once when context usage crosses 60%
+				if (
+					result.contextUsage &&
+					result.contextUsage.percentage >= 60 &&
+					!contextWarned.has(chatId)
+				) {
+					contextWarned.add(chatId);
+					await sendReply(
+						chatId,
+						`Context at ${Math.round(result.contextUsage.percentage)}%. Quality may degrade — send /new to start a fresh session.`,
+					);
+				}
+			} else {
+				pendingChats.delete(chatId);
+				notifiedInputs.delete(chatId);
+				contextWarned.delete(chatId);
+			}
+		}
+	}
+
 	async function poll(): Promise<void> {
+		// Refresh typing indicators for active sessions
+		await refreshTypingIndicators();
+
 		try {
 			const updates = (await tg("getUpdates", {
 				timeout: 0,
@@ -189,6 +422,62 @@ export function createTelegramTransport(
 			for (const update of updates) {
 				offset = update.update_id + 1;
 				saveOffset(offsetFile, offset);
+
+				// Handle inline keyboard button presses (tool approvals)
+				if (update.callback_query) {
+					const cb = update.callback_query;
+					const cbChatId = cb.message?.chat.id
+						? String(cb.message.chat.id)
+						: undefined;
+					const action = cb.data as "approve" | "deny" | undefined;
+
+					try {
+						if (cbChatId && action && ctx.executor.respondToInput) {
+							const pending = notifiedInputs.get(cbChatId);
+							const sessionId = sessionManager.get(cbChatId);
+
+							if (pending?.requestId && sessionId) {
+								const ok = await ctx.executor.respondToInput(
+									sessionId,
+									pending.requestId,
+									action,
+								);
+								const label =
+									action === "approve"
+										? `✓ Approved: ${pending.toolInfo}`
+										: `✗ Denied: ${pending.toolInfo}`;
+								await tg("editMessageText", {
+									chat_id: cbChatId,
+									message_id: cb.message!.message_id,
+									text: ok ? label : `⚠ ${label} (already handled)`,
+								});
+								notifiedInputs.delete(cbChatId);
+							} else {
+								// Stale button — no pending request
+								await tg("editMessageText", {
+									chat_id: cbChatId,
+									message_id: cb.message!.message_id,
+									text: "⚠ Already handled",
+								});
+							}
+						}
+						await tg("answerCallbackQuery", {
+							callback_query_id: cb.id,
+						});
+					} catch (err) {
+						ctx.log(
+							`Telegram: callback_query error: ${(err as Error).message}`,
+						);
+						try {
+							await tg("answerCallbackQuery", {
+								callback_query_id: cb.id,
+							});
+						} catch {
+							// Best effort
+						}
+					}
+					continue;
+				}
 
 				const msg = update.message;
 				if (!msg) continue;
@@ -213,13 +502,19 @@ export function createTelegramTransport(
 
 				if (msgText === "/start") continue;
 
-				if (msgText.trim() === "/new") {
-					sessionManager.clear(chatIdStr);
-					ctx.log(`Telegram: session reset for ${user.name}`);
-					await sendReply(
-						chatIdStr,
-						"Session reset. Next message starts fresh.",
-					);
+				// Handle slash commands
+				const cmdKey = msgText.trim().split(/\s/)[0].toLowerCase();
+				const commands = createCommands();
+				if (commands[cmdKey]) {
+					await commands[cmdKey].handler({
+						chatId: chatIdStr,
+						user,
+						sessionManager,
+						pendingChats,
+						contextWarned,
+						ctx,
+						sendReply,
+					});
 					continue;
 				}
 
@@ -310,8 +605,10 @@ export function createTelegramTransport(
 				});
 
 				await sendTyping(chatIdStr);
+				pendingChats.add(chatIdStr);
 
 				try {
+					const sessionEntry = sessionManager.getEntry(chatIdStr);
 					await orchestrateSession({
 						ctx,
 						chatId: chatIdStr,
@@ -323,6 +620,7 @@ export function createTelegramTransport(
 						sendCommand: `${sendCommand} --to ${user.chatId} --message`,
 						transportName: "telegram",
 						sendReply,
+						permissionMode: sessionEntry?.permissionMode,
 					});
 				} catch (err) {
 					ctx.log(
