@@ -1,4 +1,4 @@
-# Assistant Engine
+# Claw Starter
 
 Minimal self-modifying Claw starter. Telegram, email, browser automation, and a cron scheduler. Works with Claude Code, Codex, Gemini CLI, and anything that reads CLAUDE.md or AGENTS.md.
 
