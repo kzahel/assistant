@@ -106,8 +106,8 @@ Implement the schemas from [schemas.md](schemas.md):
 The `build-index` command scans all SKILL.md files, extracts frontmatter, cross-references with `config.yaml`, and generates/updates the skill index section in `CLAUDE.md`.
 
 ```bash
-tsx ~/code/assistant/lib/build-index.ts \
-  --skills ~/code/assistant/skills \
+tsx <engine-repo>/lib/build-index.ts \
+  --skills <engine-repo>/skills \
   --config ~/assistant-data/assistants/my-assistant/config.yaml \
   --output ~/assistant-data/assistants/my-assistant/CLAUDE.md
 ```
@@ -140,7 +140,7 @@ Minimal script that reads `config.yaml`, finds the named schedule, and spawns a 
 
 ```bash
 # Invoked by system cron:
-tsx ~/code/assistant/lib/run-schedule.ts \
+tsx <engine-repo>/lib/run-schedule.ts \
   --assistant ~/assistant-data/assistants/my-assistant \
   --schedule morning-digest
 ```
@@ -182,7 +182,7 @@ Communication style:
 ```yaml
 name: my-assistant
 defaultOutput: push
-skillsDir: ~/code/assistant/skills
+skillsDir: <engine-repo>/skills
 
 skills:
   gmail:

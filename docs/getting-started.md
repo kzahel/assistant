@@ -35,7 +35,7 @@ Add the token to your `.env` and run:
 
 ```bash
 echo 'TELEGRAM_BOT_TOKEN=your-token-here' > ~/.assistant-data/assistants/myclaw/.env
-tsx ~/code/assistant/lib/telegram-cli.ts get-chat-id
+npx tsx lib/telegram-cli.ts get-chat-id  # run from claw-starter repo
 ```
 
 Then send any message to your bot in Telegram. The CLI prints your chat ID. Add it to `.env`:
@@ -96,7 +96,7 @@ skills:
 ## 4. Build and run
 
 ```bash
-tsx ~/code/assistant/lib/build.ts --instance ~/.assistant-data/assistants/myclaw
+npx tsx lib/build.ts --instance ~/.assistant-data/assistants/myclaw  # run from claw-starter repo
 cd ~/.assistant-data/assistants/myclaw && claude
 ```
 

@@ -72,12 +72,12 @@ Source files that feed into this CLAUDE.md:
 - `config.yaml` — skills, schedules (this directory)
 - `projects.md` — project reference table (this directory)
 - `memory/learnings.md` — accumulated insights (this directory)
-- `~/code/assistant/skills/*/SKILL.md` — skill definitions
-- `~/code/assistant/templates/claude.md` — the template
+- `{{engine_dir}}/skills/*/SKILL.md` — skill definitions
+- `{{engine_dir}}/templates/claude.md` — the template
 
 **After editing ANY of these source files, rebuild this CLAUDE.md:**
 ```bash
-tsx ~/code/assistant/lib/build.ts --instance {{instance_dir}}
+tsx {{engine_dir}}/lib/build.ts --instance {{instance_dir}}
 ```
 
 Then commit both the source file change and the regenerated CLAUDE.md.

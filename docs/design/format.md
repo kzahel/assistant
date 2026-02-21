@@ -20,7 +20,7 @@ The assistant format builds on two emerging standards under the [Agentic AI Foun
 ### Engine Repo (public)
 
 ```
-~/code/assistant/
+<engine-repo>/
 ├── skills/                          # Skill definitions (SKILL.md format)
 │   ├── gmail/
 │   │   ├── SKILL.md                 # Standard SKILL.md (YAML frontmatter + prompt)
@@ -116,8 +116,8 @@ Optional additional files per skill:
 ### Build step
 
 ```bash
-tsx ~/code/assistant/lib/build-index.ts \
-  --skills ~/code/assistant/skills \
+tsx <engine-repo>/lib/build-index.ts \
+  --skills <engine-repo>/skills \
   --config ~/assistant-data/assistants/my-assistant/config.yaml \
   --output ~/assistant-data/assistants/my-assistant/CLAUDE.md
 ```
@@ -137,11 +137,11 @@ The build step:
 
 | Skill | Description | Configured | Path |
 |-------|-------------|:----------:|------|
-| browser | Control headless Chromium: navigate, snapshot, interact, screenshot | yes | ~/code/assistant/skills/browser/ |
-| daily-report | Aggregate outputs from other skills into a formatted briefing | yes | ~/code/assistant/skills/daily-report/ |
-| gmail | Check email via IMAP — fetch unread messages, summarize inbox, track read state | yes | ~/code/assistant/skills/gmail/ |
-| reddit | Digest trending posts from configured subreddits via browser | yes | ~/code/assistant/skills/reddit/ |
-| signal | Send and receive messages via Signal CLI | yes | ~/code/assistant/skills/signal/ |
+| browser | Control headless Chromium: navigate, snapshot, interact, screenshot | yes | <engine-repo>/skills/browser/ |
+| daily-report | Aggregate outputs from other skills into a formatted briefing | yes | <engine-repo>/skills/daily-report/ |
+| gmail | Check email via IMAP — fetch unread messages, summarize inbox, track read state | yes | <engine-repo>/skills/gmail/ |
+| reddit | Digest trending posts from configured subreddits via browser | yes | <engine-repo>/skills/reddit/ |
+| signal | Send and receive messages via Signal CLI | yes | <engine-repo>/skills/signal/ |
 
 **Before using a skill, read its SKILL.md for full instructions.**
 <!-- END SKILL INDEX -->
@@ -231,7 +231,7 @@ The `ASSISTANT_TRIGGER` environment variable tells the assistant how it was invo
 
 ```bash
 ASSISTANT_TRIGGER=channel:signal \
-ASSISTANT_CHANNEL='{"transport":"signal","sendCommand":"tsx ~/code/assistant/lib/send.ts --transport signal --to +1234567890"}' \
+ASSISTANT_CHANNEL='{"transport":"signal","sendCommand":"tsx <engine-repo>/lib/send.ts --transport signal --to +1234567890"}' \
   claude --dangerously-skip-permissions \
   -p "User says: what's trending on r/localllama?" \
   --cwd ~/assistant-data/assistants/my-assistant

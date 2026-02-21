@@ -8,7 +8,7 @@
  *
  * Usage:
  *   tsx lib/build.ts --instance ~/assistant-data/assistants/my-assistant
- *   tsx lib/build.ts --instance ~/assistant-data/assistants/my-assistant --skills ~/code/assistant/skills
+ *   tsx lib/build.ts --instance ~/assistant-data/assistants/my-assistant --skills ./skills
  */
 
 import { existsSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
@@ -281,6 +281,7 @@ function render(tmpl: string, enriched: Record<string, string>): string {
 	// Simple partial replacements
 	output = output.replace("{{name}}", config.name);
 	output = output.replace("{{instance_dir}}", resolvedInstance);
+	output = output.replaceAll("{{engine_dir}}", resolvedEngine);
 	output = output.replace("{{> soul}}", soul.trim());
 	output = output.replace("{{> user}}", user.trim() || "");
 	output = output.replace("{{> heart}}", heart.trim() || "");

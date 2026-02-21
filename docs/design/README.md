@@ -7,7 +7,7 @@ An open, data-driven format for personal AI assistants. Not a framework, not a d
 **Convention over runtime.** Like how `CLAUDE.md` tells any tool about a project, the assistant format tells any Claude session about a personality, skills, and work habits. The format is the product — runtimes are interchangeable.
 
 **Two repos, clear boundary.**
-- **Public engine repo** (`~/code/assistant/`) — skill definitions, schemas, shared tooling. Open source, useful to anyone.
+- **Public engine repo** (`<engine-repo>/`) — skill definitions, schemas, shared tooling. Open source, useful to anyone.
 - **Private data repo** (`~/assistant-data/`) — assistant instances (soul, config, memory, secrets). Personal, never published.
 
 **Harness-agnostic.** Works with:

@@ -7,11 +7,16 @@ You bring your own agent runtime (Claude Code, Codex, etc.) — we don't own or 
 ## Quick Start
 
 ```bash
+# Clone this repo anywhere
+git clone https://github.com/kzahel/claw-starter.git
+cd claw-starter && npm install
+
+# Create an instance (private data, lives outside this repo)
 mkdir -p ~/.assistant-data/assistants/dave
 cat > ~/.assistant-data/assistants/dave/config.yaml << 'EOF'
 name: Dave
 EOF
-tsx ~/code/assistant/lib/build.ts --instance ~/.assistant-data/assistants/dave
+npx tsx lib/build.ts --instance ~/.assistant-data/assistants/dave
 cd ~/.assistant-data/assistants/dave && claude
 ```
 

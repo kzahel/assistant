@@ -19,7 +19,9 @@ browser start        # auto-starts Chrome on first use
 If the server process isn't running at all:
 
 ```bash
-tsx ~/code/assistant/lib/browser/server.ts &
+# Derive the engine dir from the browser tool path in the Tool Paths table above
+# e.g., if browser = "tsx /foo/bar/lib/browser-cli.ts", then:
+tsx /foo/bar/lib/browser/server.ts &
 ```
 
 ## CLI Reference
@@ -111,7 +113,7 @@ The browser profile persists (cookies survive restarts). To log in:
 
 ## Troubleshooting
 
-- **Connection refused:** Server isn't running. Start with `tsx ~/code/assistant/lib/browser/server.ts &`
+- **Connection refused:** Server isn't running. Start the browser server (see "Starting the Server" above).
 - **Timeout on start:** Stale Chrome process holding the user-data lock. Kill it: `pkill -f 'chrome.*browser-control'` then retry.
 - **Snapshot too large:** Use `--efficient` or `--selector "main"` to scope down.
 - **Reddit blocked:** IP rate-limited. Wait 30s+ between requests. Log in for higher limits.

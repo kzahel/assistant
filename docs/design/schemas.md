@@ -62,7 +62,7 @@ export const AssistantConfigSchema = z.object({
   defaultOutput: z.enum(["session", "push", "signal", "telegram", "webhook", "log"])
     .default("log"),
 
-  /** Path to skills directory (default: ~/code/assistant/skills) */
+  /** Path to skills directory (default: <engine-repo>/skills) */
   skillsDir: z.string().optional(),
 
   /** Per-skill configuration. Keys are skill directory names. */
@@ -79,7 +79,7 @@ export const AssistantConfigSchema = z.object({
 name: my-assistant
 soul: ./soul.md
 defaultOutput: push
-skillsDir: ~/code/assistant/skills
+skillsDir: <engine-repo>/skills
 
 skills:
   gmail:

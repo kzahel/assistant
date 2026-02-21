@@ -23,7 +23,7 @@ Instance config should only contain things that differ per-assistant: personalit
 
 ### What lives where
 
-**Engine repo** (public, `~/code/assistant/`):
+**Engine repo** (public, `<engine-repo>/`):
 - Skill definitions (`skills/*/SKILL.md`)
 - Tool implementations (`lib/*-cli.ts`)
 - Build script, scheduler, templates
@@ -58,10 +58,10 @@ Same logic — the build step knows where skills are. The `--instance` flag tell
 Before:
 ```yaml
 name: my-assistant
-skillsDir: ~/code/assistant/skills
+skillsDir: <engine-repo>/skills
 toolPaths:
-  gmail: tsx ~/code/assistant/lib/gmail-cli.ts
-  browser: tsx ~/code/assistant/lib/browser-cli.ts
+  gmail: tsx <engine-repo>/lib/gmail-cli.ts
+  browser: tsx <engine-repo>/lib/browser-cli.ts
 
 skills:
   gmail:
