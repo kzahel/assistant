@@ -1,8 +1,8 @@
 # Assistant Engine
 
-Directory convention for portable AI coding-agent assistants. Works with Claude Code, Codex, Gemini CLI, and anything that reads CLAUDE.md or AGENTS.md.
+Minimal self-modifying Claw starter. Telegram, email, browser automation, and a cron scheduler. Works with Claude Code, Codex, Gemini CLI, and anything that reads CLAUDE.md or AGENTS.md.
 
-The agent (Claude Code, etc.) is the runtime. This engine just gives it persistent identity, a few tools, and a scheduler.
+The agent (Claude Code, Codex, etc.) is the runtime — this just gives it identity, tools, and a harness to invoke it on a schedule or from a message. The assistant edits its own config, memory, and personality as it works.
 
 ## Quick Start
 
