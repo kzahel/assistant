@@ -102,20 +102,19 @@ cd ~/.assistant-data/assistants/myclaw && claude
 
 Your Claw is running. Try asking it to check your email or send you a Telegram message.
 
-## 5. Optional: add personality
+## 5. Make it yours
 
-Create `~/.assistant-data/assistants/myclaw/soul.md`:
+The fastest way to personalize your Claw is to let it interview you. Once it's running, just say:
 
-```markdown
-You are MyClaw, a no-nonsense assistant.
-Keep answers short. Prefer action over discussion.
-```
+> Interview me like you're writing my obituary. Ask about my life, career, interests, what I care about. Then write soul.md and user.md based on what you learn.
 
-Rebuild after any file change:
+It'll ask you questions, then write its own personality and context files. Rebuild after:
 
 ```bash
 tsx ~/code/assistant/lib/build.ts --instance ~/.assistant-data/assistants/myclaw
 ```
+
+Or do it manually — create `soul.md` for personality and `user.md` for context about you. The Claw can edit these files itself over time.
 
 ## Next steps
 
