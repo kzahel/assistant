@@ -2,7 +2,7 @@
 
 Minimal self-modifying Claw starter. Telegram, email, browser automation, and a cron scheduler. Works with Claude Code, Codex, Gemini CLI, and anything that reads CLAUDE.md or AGENTS.md.
 
-The agent (Claude Code, Codex, etc.) is the runtime — this just gives it identity, tools, and a harness to invoke it on a schedule or from a message. The assistant edits its own config, memory, and personality as it works.
+You bring your own agent runtime (Claude Code, Codex, etc.) — we don't own or wrap it. This is just minimal scaffolding: identity files, a few tool CLIs, and a scheduler that invokes the agent on a cron or incoming message. The assistant edits its own config, memory, and personality as it works.
 
 ## Quick Start
 
@@ -75,4 +75,5 @@ ASSISTANT_TRIGGER=channel:telegram claude -p "User says: ..."
 
 ## Docs
 
-See [docs/design/](docs/design/) for format spec, comparisons with other projects, schemas, and architecture decisions.
+- **[Getting Started](docs/getting-started.md)** — Set up Telegram + Gmail in 10 minutes
+- [docs/design/](docs/design/) — Format spec, comparisons with other projects, schemas, architecture decisions
