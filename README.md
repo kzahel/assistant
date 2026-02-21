@@ -13,9 +13,7 @@ cd claw-starter && npm install
 
 # Create an instance (private data, lives outside this repo)
 mkdir -p ~/.assistant-data/assistants/dave
-cat > ~/.assistant-data/assistants/dave/config.yaml << 'EOF'
-name: Dave
-EOF
+echo 'name: Dave' > ~/.assistant-data/assistants/dave/config.yaml
 npx tsx lib/build.ts --instance ~/.assistant-data/assistants/dave
 cd ~/.assistant-data/assistants/dave && claude
 ```

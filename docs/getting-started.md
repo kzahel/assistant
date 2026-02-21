@@ -13,9 +13,7 @@ Set up a working Claw with Telegram and Gmail in about 10 minutes.
 
 ```bash
 mkdir -p ~/.assistant-data/assistants/myclaw
-cat > ~/.assistant-data/assistants/myclaw/config.yaml << 'EOF'
-name: MyClaw
-EOF
+echo 'name: MyClaw' > ~/.assistant-data/assistants/myclaw/config.yaml
 ```
 
 ## 2. Set up Telegram
