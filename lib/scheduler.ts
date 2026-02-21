@@ -160,7 +160,7 @@ function buildSessionMessage(schedule: Schedule, _config: Config): string {
 // --- Executor setup ---
 
 function createExecutor(config: Config): SessionExecutor {
-	const executorType = args.executor ?? config.executor ?? "yep";
+	const executorType = args.executor ?? config.executor ?? "claude";
 
 	if (executorType === "claude") {
 		log("Using Claude CLI executor");

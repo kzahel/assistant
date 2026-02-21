@@ -4,7 +4,7 @@ Set up a working Claw with Telegram and Gmail in about 10 minutes.
 
 ## Prerequisites
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (or Codex, Gemini CLI, etc.)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — required for interactive use and the scheduler
 - Node.js 18+ with `tsx` installed (`npm i -g tsx`)
 - A Telegram account
 - A Gmail account with 2-factor authentication enabled
@@ -102,7 +102,23 @@ cd ~/.assistant-data/assistants/myclaw && claude
 
 Your Claw is running. Try asking it to check your email or send you a Telegram message.
 
-## 5. Make it yours
+## 5. Start the scheduler
+
+The scheduler runs scheduled tasks (cron) and polls Telegram for incoming messages. Without it, your bot won't respond to Telegram messages and schedules won't fire.
+
+Ask your agent to start it:
+
+> Start the scheduler service for me.
+
+Or run it directly from the claw-starter repo:
+
+```bash
+npx tsx lib/scheduler.ts --instance ~/.assistant-data/assistants/myclaw
+```
+
+The scheduler uses `claude` as the default executor. Codex support isn't built yet — but the executor interface is simple, so you can ask Codex (or Claude) to add it. To keep the scheduler running persistently, set it up as a systemd user service or launchd agent.
+
+## 6. Make it yours
 
 The fastest way to personalize your Claw is to let it interview you. Once it's running, just say:
 
@@ -110,7 +126,7 @@ The fastest way to personalize your Claw is to let it interview you. Once it's r
 
 It'll ask you questions, then write its own personality and context files. It knows how to rebuild itself — no manual steps needed.
 
-## What now?
+## 7. What now?
 
 Just ask it to do things. It'll figure out the config, schedules, and skills on its own.
 
