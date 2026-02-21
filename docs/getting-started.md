@@ -108,13 +108,7 @@ The fastest way to personalize your Claw is to let it interview you. Once it's r
 
 > Interview me like you're writing my obituary. Ask about my life, career, interests, what I care about. Then write soul.md and user.md based on what you learn.
 
-It'll ask you questions, then write its own personality and context files. Rebuild after:
-
-```bash
-tsx ~/code/assistant/lib/build.ts --instance ~/.assistant-data/assistants/myclaw
-```
-
-Or do it manually — create `soul.md` for personality and `user.md` for context about you. The Claw can edit these files itself over time.
+It'll ask you questions, then write its own personality and context files. It knows how to rebuild itself — no manual steps needed.
 
 ## Next steps
 

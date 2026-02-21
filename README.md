@@ -39,7 +39,7 @@ CLAUDE.md        # compiled output (generated)
 AGENTS.md        # symlink to CLAUDE.md
 ```
 
-`build.ts` merges engine skills/template with instance files into a compiled CLAUDE.md. Rebuild after any change.
+`build.ts` merges engine skills/template with instance files into a compiled CLAUDE.md. The agent knows when to rebuild itself.
 
 ## Skills
 
