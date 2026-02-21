@@ -110,9 +110,13 @@ The fastest way to personalize your Claw is to let it interview you. Once it's r
 
 It'll ask you questions, then write its own personality and context files. It knows how to rebuild itself — no manual steps needed.
 
-## Next steps
+## What now?
 
-- Add a schedule in `config.yaml` to run tasks on a cron
-- Enable the browser skill for web automation
-- Create `user.md` and `projects.md` to give your Claw context about you
-- Check `docs/design/` for the full format spec
+Just ask it to do things. It'll figure out the config, schedules, and skills on its own.
+
+- "Send me a summary of my inbox every morning at 7am"
+- "Check r/programming for anything about Rust and message me on Telegram"
+- "How many git commits did I make today?"
+- "Set up a daily digest of my GitHub notifications"
+
+If it needs a skill it doesn't have configured, it'll tell you what's missing.
