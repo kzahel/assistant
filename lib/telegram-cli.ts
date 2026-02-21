@@ -19,32 +19,12 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { marked } from "marked";
+import { loadEnv, resolveInstanceDir } from "./utils.js";
+import { createTgApi } from "./channels/telegram.js";
 
 // --- Resolve instance dir ---
 
-const instanceDir =
-	process.env.ASSISTANT_INSTANCE_DIR ??
-	resolve(process.env.HOME!, "assistant-data/assistants/my-assistant");
-
-// --- Load .env ---
-
-function loadEnv(dir: string): Record<string, string> {
-	const envPath = join(dir, ".env");
-	try {
-		const raw = readFileSync(envPath, "utf-8");
-		const vars: Record<string, string> = {};
-		for (const line of raw.split("\n")) {
-			const trimmed = line.trim();
-			if (!trimmed || trimmed.startsWith("#")) continue;
-			const eq = trimmed.indexOf("=");
-			if (eq === -1) continue;
-			vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
-		}
-		return vars;
-	} catch {
-		return {};
-	}
-}
+const instanceDir = resolveInstanceDir();
 
 const env = loadEnv(instanceDir);
 const botToken =
@@ -57,29 +37,14 @@ if (!botToken) {
 	process.exit(1);
 }
 
-const API_BASE = `https://api.telegram.org/bot${botToken}`;
+// --- Telegram API ---
 
-// --- Telegram API helpers ---
-
-async function tg(
-	method: string,
-	params?: Record<string, unknown>,
-): Promise<unknown> {
-	const res = await fetch(`${API_BASE}/${method}`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: params ? JSON.stringify(params) : undefined,
-	});
-
-	const data = (await res.json()) as { ok: boolean; result?: unknown; description?: string };
-
-	if (!data.ok) {
-		console.error(`Telegram API error: ${data.description ?? "unknown"}`);
+const tg = createTgApi(botToken, {
+	onError: (msg) => {
+		console.error(msg);
 		process.exit(1);
-	}
-
-	return data.result;
-}
+	},
+});
 
 // --- Helpers ---
 

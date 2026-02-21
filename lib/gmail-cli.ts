@@ -16,32 +16,11 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { ImapFlow } from "imapflow";
 import { createTransport } from "nodemailer";
+import { loadEnv, resolveInstanceDir } from "./utils.js";
 
-// --- Resolve instance dir (walk up from this file or use env) ---
+// --- Resolve instance dir ---
 
-const instanceDir =
-	process.env.ASSISTANT_INSTANCE_DIR ??
-	resolve(process.env.HOME!, "assistant-data/assistants/my-assistant");
-
-// --- Load .env ---
-
-function loadEnv(dir: string): Record<string, string> {
-	const envPath = join(dir, ".env");
-	try {
-		const raw = readFileSync(envPath, "utf-8");
-		const vars: Record<string, string> = {};
-		for (const line of raw.split("\n")) {
-			const trimmed = line.trim();
-			if (!trimmed || trimmed.startsWith("#")) continue;
-			const eq = trimmed.indexOf("=");
-			if (eq === -1) continue;
-			vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
-		}
-		return vars;
-	} catch {
-		return {};
-	}
-}
+const instanceDir = resolveInstanceDir();
 
 const env = loadEnv(instanceDir);
 const appPassword = env.GMAIL_APP_PASSWORD ?? process.env.GMAIL_APP_PASSWORD;

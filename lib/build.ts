@@ -16,26 +16,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import matter from "gray-matter";
 import YAML from "yaml";
-
-// --- .env loader ---
-
-function loadEnv(dir: string): Record<string, string> {
-	const envPath = join(dir, ".env");
-	try {
-		const raw = readFileSync(envPath, "utf-8");
-		const vars: Record<string, string> = {};
-		for (const line of raw.split("\n")) {
-			const trimmed = line.trim();
-			if (!trimmed || trimmed.startsWith("#")) continue;
-			const eq = trimmed.indexOf("=");
-			if (eq === -1) continue;
-			vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
-		}
-		return vars;
-	} catch {
-		return {};
-	}
-}
+import { loadEnv } from "./utils.js";
 
 // --- Enrichers ---
 
