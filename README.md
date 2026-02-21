@@ -1,6 +1,6 @@
 # Claw Starter
 
-Minimal self-modifying Claw starter. Telegram, email, browser automation, and a cron scheduler. Works with Claude Code, Codex, Gemini CLI, and anything that reads CLAUDE.md or AGENTS.md.
+Minimal self-modifying Claw starter. Telegram, email, browser automation, and a cron scheduler / gateway. Works with Claude Code, Codex, Gemini CLI, and anything that reads CLAUDE.md or AGENTS.md.
 
 You bring your own agent runtime (Claude Code, Codex, etc.) — we don't own or wrap it. This is just minimal scaffolding: identity files, a few tool CLIs, and a scheduler that invokes the agent on a cron or incoming message. The assistant edits its own config, memory, and personality as it works.
 
@@ -46,7 +46,7 @@ AGENTS.md        # symlink to CLAUDE.md
 
 ## Skills
 
-Skills are [SKILL.md](https://agentskills.io/specification) files — markdown instructions, no runtime coupling. Works across Claude Code, Codex, Copilot, Cursor, etc.
+Skills are [SKILL.md](https://agentskills.io/specification) files — markdown instructions, no runtime coupling. Works across Claude Code, Codex, Copilot, Cursor, etc. Here's the starter pack:
 
 | Skill | Description |
 |-------|-------------|
