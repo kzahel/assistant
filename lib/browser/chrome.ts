@@ -81,6 +81,7 @@ export async function launchChrome(
 		"--no-sandbox",
 		"--disable-setuid-sandbox",
 		"--disable-gpu",
+		...(process.env.BROWSER_IGNORE_CERTS ? ["--ignore-certificate-errors"] : []),
 		...STEALTH_CHROME_ARGS,
 		"about:blank",
 	];

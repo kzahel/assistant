@@ -14,8 +14,10 @@ Scrape subreddits to extract posts, comments, and trends. Uses the **browser** s
 **Always use `browser evaluate` with JS** to extract structured data:
 
 ```bash
-browser evaluate 'JSON.stringify([...document.querySelectorAll("#siteTable .thing")].map(el => ({ title: el.querySelector("a.title")?.textContent, score: el.querySelector(".score.unvoted")?.textContent, comments: el.querySelector(".comments")?.textContent, flair: el.querySelector(".linkflairlabel")?.textContent, url: el.querySelector("a.title")?.href, time: el.querySelector("time")?.getAttribute("title"), author: el.querySelector(".author")?.textContent })))'
+browser evaluate 'JSON.stringify([...document.querySelectorAll("#siteTable .thing")].map(el => ({ title: el.querySelector("a.title")?.textContent, score: el.querySelector(".score.unvoted")?.textContent, comments: el.querySelector(".comments")?.textContent, flair: el.querySelector(".linkflairlabel")?.textContent, url: el.querySelector("a.title")?.href, permalink: el.getAttribute("data-permalink"), time: el.querySelector("time")?.getAttribute("title"), author: el.querySelector(".author")?.textContent })))'
 ```
+
+The `permalink` field (from `data-permalink`) is a reliable fallback — it always contains the Reddit thread path (e.g., `/r/ClaudeAI/comments/abc123/post_title/`). Prepend `https://reddit.com` to it for output links.
 
 This returns clean JSON in ~2-3KB instead of a 20KB+ truncated accessibility tree.
 
@@ -119,6 +121,12 @@ browser close    # close current tab when done with a subreddit
    - Flag posts worth commenting on or responding to
 4. browser close tabs when done
 ```
+
+## Output Links
+
+**Every post in output MUST have a clickable link. No exceptions.** If the extracted `url` field is missing or empty, construct a permalink from `https://reddit.com` + the post's `data-permalink` attribute.
+
+**Always use `reddit.com` (not `old.reddit.com`) in any links you include in output** (emails, Telegram messages, digests). Old Reddit is unreadable on mobile. Scraping uses `old.reddit.com` internally, but strip the `old.` prefix before including URLs in any user-facing output.
 
 ## Post Scoring Heuristic
 
